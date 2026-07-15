@@ -79,6 +79,19 @@ done and any deviations from the spec (and why).
   needs to be on `PATH` for Prophet itself to work (confirmed), only if you
   invoke `cmdstanpy.install_cmdstan`/rebuild CmdStan again in a fresh shell.
 
+**Incident — bad commit caught and reverted:** one of the RTools install
+attempts (a relative `/DIR` arg resolving against whatever the shell's cwd
+happened to be at the time) left a stray `Users\mohit\.cmdstan\RTools40\...`
+copy (~270MB of MinGW/RTools binaries) sitting inside the repo root itself,
+which `git add -A` picked up and one commit briefly included. Caught it
+immediately after (git status showing files way outside the expected diff),
+reverted with `git reset --mixed HEAD~1` (safe — repo is local-only, nothing
+pushed), deleted the stray folder, added an `/Users/` rule to `.gitignore` to
+guard against a repeat, expired the reflog and ran `git gc --prune=now` to
+reclaim the space (`.git` went from 272MB back to ~48KB), then re-committed
+cleanly. Current history is 2 commits, no oversized objects — verified via
+`git count-objects -v`.
+
 **Raw data:**
 - Not downloaded by this agent, per your instruction — this is documented as a
   manual step in README.md (`kaggle competitions download -c
