@@ -93,17 +93,22 @@ cleanly. Current history is 2 commits, no oversized objects — verified via
 `git count-objects -v`.
 
 **Raw data:**
-- Not downloaded by this agent, per your instruction — this is documented as a
-  manual step in README.md (`kaggle competitions download -c
-  m5-forecasting-accuracy -p data/raw/`, then unzip). `data/raw/` currently
-  contains only a `.gitkeep`. **You still need to run this step before Phase 1
-  can proceed** (Phase 1 needs `sales_train_evaluation.csv`, `calendar.csv`,
-  `sell_prices.csv` in `data/raw/`).
+- Downloaded by you via the Kaggle CLI/website per the README's manual step.
+  Verified present and correct in `data/raw/`: `sales_train_evaluation.csv`
+  (30,491 rows = 30,490 series + header, matches M5's known series count),
+  `calendar.csv` (1,970 rows = 1,969 days + header), `sell_prices.csv`.
+  Headers spot-checked against the expected M5 schema. The download had
+  extracted one directory level too deep (`data/raw/data/raw/...`, plus the
+  `.zip` and two files the project doesn't use — `sales_train_validation.csv`,
+  `sample_submission.csv`); moved the three needed files up to `data/raw/` and
+  removed the rest. `data/raw/*` stays gitignored, confirmed not tracked.
 
 **Acceptance criteria check (§12, Phase 0 row):**
 - [x] `run.sh` exists (stub, documented)
 - [x] Repo structure matches §10.1
-- [ ] Raw CSVs present in `data/raw/` — **blocked on you running the Kaggle CLI**
+- [x] Raw CSVs present in `data/raw/` — verified (see above)
+
+**Phase 0 is now fully complete — all acceptance criteria met.**
 
 ---
 
