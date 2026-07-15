@@ -27,7 +27,9 @@ done and any deviations from the spec (and why).
   you'll run the Kaggle CLI yourself).
 - `.gitignore` added (venv/, data/raw, data/processed, mlruns, model checkpoints).
 - Initialized git repo, committed the scaffold.
-- Installed the full dependency stack into `venv/` and verified `torch.cuda.is_available()`.
+- Installed the full dependency stack into `venv/`. Verified `torch.cuda.is_available() == True`
+  (RTX 2070, torch 2.5.1+cu121) and did an actual `Prophet().fit()/.predict()` smoke test
+  (not just import) — see the CmdStan deviation note below for what that took.
 
 **Deviation from spec — Python version:**
 - Spec §3 pins Python 3.11. The pre-existing `venv/` in this directory was built
@@ -38,6 +40,44 @@ done and any deviations from the spec (and why).
   (via `winget install Python.Python.3.11`) and rebuild `venv/` from scratch
   rather than risk the stack on 3.14. No spec requirement changed — this just
   brings the environment into compliance with §3 as originally written.
+
+**Deviation from spec — Git not pre-installed:**
+- This machine had no `git` at all (not just an unversioned directory). Flagged
+  to you; you approved installing Git via `winget install Git.Git` (2.55.0.3).
+  Repo initialized and Phase 0 scaffold committed.
+
+**Deviation from spec — Prophet/CmdStan required manual toolchain repair:**
+- `pip install prophet` succeeded, but Prophet's Windows wheel ships a
+  precompiled Stan binary that newer `cmdstanpy` (1.3.0, pulled in
+  unconstrained by prophet's own dependency spec) refuses to load: `cmdstanpy`
+  added a strict check requiring a `makefile` in the CmdStan directory it's
+  pointed at, which Prophet's bundled minimal `cmdstan-2.33.1` folder (binaries
+  only, no build files, since it's never rebuilt) doesn't have. Root cause
+  confirmed by reproducing the exception directly (Prophet's own error handling
+  swallows it into a misleading `AttributeError`). Fix: added an empty
+  placeholder `makefile` to
+  `venv/Lib/site-packages/prophet/stan_model/cmdstan-2.33.1/` — the documented
+  community workaround for this exact prophet/cmdstanpy version mismatch.
+  Verified with an actual `Prophet().fit()/.predict()` call, not just import.
+- Along the way, also built a full standalone CmdStan 2.39.0 via
+  `cmdstanpy.install_cmdstan` (not strictly required for the above fix, but
+  needed for general `cmdstanpy` use and worth keeping working). This required
+  installing the RTools40 MinGW toolchain by hand: `cmdstanpy`'s own Windows
+  installers (`install_cxx_toolchain`, and the toolchain step inside
+  `install_cmdstan`) invoke a GUI Inno Setup installer via `subprocess.Popen`
+  with no working directory / desktop context in this automation shell, so it
+  silently no-ops (exits 0, installs nothing) — not an antivirus block, verified
+  by checking Defender logs and by direct invocation. Worked around by: (1)
+  having you run the installer directly (`RTools40.exe`, no silent flags) in
+  your own interactive session, (2) discovering the earlier silent attempt
+  had actually installed to a wrong nested path due to a relative `/DIR` arg
+  and moving it into place, (3) running RTools' own bundled `pacman` to install
+  the `mingw-w64-x86_64-make` package (the actual missing piece —
+  `mingw32-make.exe`), (4) re-running `cmdstanpy.install_cmdstan`, which then
+  built cleanly. CmdStan lives at `C:\Users\mohit\.cmdstan\cmdstan-2.39.0`;
+  RTools40/mingw32-make at `C:\Users\mohit\.cmdstan\RTools40`. Neither path
+  needs to be on `PATH` for Prophet itself to work (confirmed), only if you
+  invoke `cmdstanpy.install_cmdstan`/rebuild CmdStan again in a fresh shell.
 
 **Raw data:**
 - Not downloaded by this agent, per your instruction — this is documented as a

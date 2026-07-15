@@ -21,5 +21,10 @@ mlartifacts/
 .vscode/
 .idea/
 
+# Stray toolchain installs that occasionally land in the repo root due to
+# relative-path bugs in installer subprocess calls (RTools/CmdStan setup).
+# Real installs live outside the repo, under C:\Users\<you>\.cmdstan\.
+/Users/
+
 # Claude Code project settings
 .claude/
