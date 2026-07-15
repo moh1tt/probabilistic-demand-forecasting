@@ -187,6 +187,90 @@ cleanly. Current history is 2 commits, no oversized objects — verified via
 
 ## Phase 2 — Baselines + backtesting harness
 
+**Status:** Done, pending your review.
+
+**What was built:**
+- `src/backtest/metrics.py` — WQL (pinball loss, averaged across P10/P50/P90
+  per spec §8) and MASE (scaled by in-sample lag-7 seasonal-naive error).
+  `mase_polars` computes it vectorized (group_by, not a per-series Python
+  loop) so it stays fast at full 30,490-series scale.
+- `src/backtest/harness.py` — hand-rolled rolling-origin backtester (spec §7,
+  no library): `generate_origins()` places N origins spaced 28 days apart;
+  `run_backtest()` slices history/future per origin with an explicit
+  assertion that history never contains a day past the origin (a real
+  no-leakage check, not just a design intent) and reports metrics per
+  origin **and** per segment; `aggregate_across_origins()` gives mean+std
+  across origins per spec §7's "show stability, not just one number."
+- `src/models/baselines.py` — seasonal naive (lag-7, fully vectorized in
+  polars, runs at full scale), ETS (statsmodels Holt-Winters, quantiles via
+  simulation), Prophet (80% interval via `interval_width=0.8`). All three
+  return the same `[id, d_num, q0.1, q0.5, q0.9]` shape so the harness can
+  run any of them interchangeably.
+- `src/backtest/run_baselines.py` — orchestration: loads train+val, tags
+  each series `high_volume`/`long_tail` (top 20% by avg daily volume over
+  train, per spec §8), runs all three models across 5 origins, writes
+  `reports/baseline_backtest_results.csv` (per origin/segment) and
+  `reports/baseline_backtest_summary.csv` (aggregated). Wired into `run.sh`.
+- 17 new unit tests (`test_metrics.py`, `test_harness.py`, `test_baselines.py`),
+  all against small synthetic data — including a perfect-forecast check that
+  WQL is exactly 0, and an explicit no-leakage assertion test on the harness
+  itself. Full suite: 26/26 passing.
+
+**Subset size and selection method (spec §6.1 — must be documented, not
+silent):** ETS and Prophet fit one model per series; at full scale (30,490
+series x 5 origins) that's ~150k+ fits each, infeasible here. Both run on
+the same 100-series subset, **stratified by `cat_id` with proportional
+allocation** (`select_baseline_subset()`, seed=42, reproducible). Seasonal
+naive is cheap and vectorized, so it runs at true full scale (all 30,490
+series) — no subsampling needed there.
+
+**Origin placement:** 5 origins, 28 days apart, chosen so the *last*
+origin's 28-day evaluation window lands exactly on the val split
+(days 1886-1913) and all earlier origins' windows fall inside train — so
+backtesting never touches the test split, per spec §7's "test set touched
+only once, at the end."
+
+**Volume segmentation (spec §8):** top 20% of series by mean daily sales
+over the train period = `high_volume`; the rest = `long_tail`. Computed once
+and reused across all origins (a series' segment doesn't change origin to
+origin). Cold-start vs. warm-start segmentation (also in §8) is **deferred
+to Phase 4**, per the spec's own build order — no cold-start holdout exists
+yet.
+
+**Results (full run, `reports/baseline_backtest_summary.csv`):**
+
+| model | segment | WQL (mean ± std) | MASE (mean ± std) | avg n_series |
+|---|---|---|---|---|
+| seasonal_naive | overall | 0.606 ± 0.044 | 1.121 ± 0.052 | 30,479 |
+| seasonal_naive | high_volume | 0.482 ± 0.044 | 1.017 ± 0.016 | 6,097 |
+| seasonal_naive | long_tail | 0.833 ± 0.049 | 1.147 ± 0.069 | 24,382 |
+| ets | overall | **0.506** ± 0.042 | **0.972** ± 0.032 | 100 |
+| ets | high_volume | 0.429 ± 0.045 | 0.835 ± 0.099 | 22 |
+| ets | long_tail | 0.683 ± 0.023 | 1.011 ± 0.031 | 78 |
+| prophet | overall | 1.035 ± 0.091 | 1.342 ± 0.059 | 100 |
+| prophet | high_volume | 1.105 ± 0.144 | 1.714 ± 0.170 | 22 |
+| prophet | long_tail | 0.884 ± 0.025 | 1.237 ± 0.028 | 78 |
+
+**Honest finding, not hidden (spec §13):** Prophet is the weakest baseline
+here, clearly worse than both naive and ETS on this subset. Spot-checked one
+`high_volume` series (`FOODS_1_052_WI_2_evaluation`, origin day 1885) to rule
+out a plumbing bug before writing this up — dates align correctly and
+forecast magnitudes are in the right range. The actual cause: this series
+(like much of M5) is intermittent/low-count (mostly 0-6 units/day with
+occasional spikes), and Prophet's continuous-trend, Gaussian-noise model is
+a known poor fit for sparse count data — it collapses toward a near-zero
+median with a narrow upper quantile that misses the spikes. ETS and naive,
+which don't assume continuous Gaussian noise, handle this better. This is a
+property of the data/model combination, not a bug, and is exactly the kind
+of result the spec says to report honestly rather than tune away (§13,
+"deep model doesn't beat baselines... still a valid, documented finding" —
+same principle applied here to a baseline-vs-baseline comparison). Will
+carry this framing into the DeepAR-vs-baselines comparison in Phase 3.
+
+**Acceptance criteria check (§12, Phase 2 row):**
+- [x] Naive/ETS/Prophet produce forecasts and metrics on rolling origins
+- [x] Results saved to a results table (`reports/baseline_backtest_*.csv`)
+
 Not started.
 
 ---

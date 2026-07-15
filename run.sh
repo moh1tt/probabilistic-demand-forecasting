@@ -19,8 +19,7 @@ fi
 python -m src.ingestion.build_dataset
 
 # --- Phase 2: baselines + backtesting ---------------------------------------
-# python -m src.models.baselines
-# python -m src.backtest.harness
+python -m src.backtest.run_baselines
 
 # --- Phase 3: global model (DeepAR) -----------------------------------------
 # python -m src.models.global_model
@@ -31,4 +30,4 @@ python -m src.ingestion.build_dataset
 # --- Phase 5: business simulation -------------------------------------------
 # python -m src.business_sim.simulate
 
-echo "== done (Phases 2-5 not wired up yet) =="
+echo "== done (Phases 3-5 not wired up yet) =="
