@@ -114,7 +114,74 @@ cleanly. Current history is 2 commits, no oversized objects — verified via
 
 ## Phase 1 — Ingestion + preprocessing + time split
 
-Not started. Blocked on raw data being present in `data/raw/`.
+**Status:** Done, pending your review.
+
+**What was done:**
+- `src/ingestion/load.py` — raw CSV loaders (polars).
+- `src/ingestion/build_dataset.py` — melts `sales_train_evaluation.csv` from
+  wide (one column per day) to long (one row per series-day), joins in
+  `calendar.csv` (date, events, SNAP flags) and `sell_prices.csv` (price),
+  normalizes schema (id/category columns cast to `Categorical`, numeric
+  columns downcast), handles missing values, assigns the train/val/test split,
+  and writes one Parquet file per split to `data/processed/`.
+- `tests/test_ingestion.py` — 6 unit tests against small synthetic frames
+  (not the real CSVs, so they run without `data/raw/` populated): melt
+  correctness, calendar join + null-event-fill, price join introducing nulls
+  for pre-release rows, the drop policy, and split-boundary correctness
+  (including a no-overlap check). All pass.
+- `run.sh` Phase 1 stage uncommented (`python -m src.ingestion.build_dataset`).
+
+**Missing-value handling (schema normalization, per §10.3):**
+- M5's sales table is dense-zero-filled from day 1 for every series, even
+  before an item was actually stocked at a given store — `sell_prices.csv`
+  only has a row once the item is released, so a null price after the join
+  marks a pre-release row. These rows were **dropped**, not treated as
+  zero-demand history, since the item wasn't purchasable yet (standard M5
+  preprocessing practice, not a novel modeling choice). Result: 59,181,090
+  raw series-day rows -> 46,881,677 after dropping (20.78% dropped, all from
+  the training window — the val/test windows, being very late in the
+  5+-year history, had zero pre-release rows to drop, confirming virtually
+  every item is released by then).
+- Null `event_name_1/2`, `event_type_1/2` (no event that day) filled with
+  the string `"none"`.
+- No other nulls: verified `null_count()` is all-zero on every column across
+  all three output Parquet files.
+
+**Deviation from spec — split anchored to available data, not literal d_1942-1969:**
+- Spec §4.3 defines the split in relative terms ("last 56 days", "final 28
+  days") and separately notes the 28-day test length "matches M5's native
+  evaluation horizon." The Kaggle `m5-forecasting-accuracy` competition
+  download's `sales_train_evaluation.csv` only contains actuals through day
+  1941 (1941 day-columns, confirmed by header inspection) — the true final
+  28-day holdout (d_1942-d_1969) was never published as part of the standard
+  Kaggle competition data; it's only available from the separate
+  post-competition M5-methods GitHub release, which is outside the
+  documented §4.2 download step. Rather than fetch data from a source the
+  spec doesn't mention, `assign_split()` computes the split relative to
+  whatever the max day in the loaded data actually is (currently 1941), so
+  "final 28 days" = d_1914-d_1941, "val" = d_1886-d_1913, "train" = d_1-d_1885.
+  This preserves the spec's actual methodology (rolling-origin backtesting in
+  Phase 2, leakage prevention in Phase 4) exactly — only the absolute
+  calendar anchor differs, and only because of a data-availability gap, not a
+  methodology change. Convenient side note: d_1913/d_1941 are exactly M5's
+  own historical public/private-leaderboard cutoffs, so this split reproduces
+  a well-precedented boundary, not an arbitrary one.
+
+**Split results (from the real run):**
+| split | rows | days | series |
+|---|---|---|---|
+| train | 45,174,237 | d_1 – d_1885 | 30,490 |
+| val | 853,720 | d_1886 – d_1913 (28 days) | 30,490 |
+| test | 853,720 | d_1914 – d_1941 (28 days) | 30,490 |
+
+**Output:** `data/processed/{train,val,test}.parquet` (train ~102MB, val/test
+~0.7MB each — not committed, gitignored per `data/processed/*`).
+
+**Acceptance criteria check (§12, Phase 1 row):**
+- [x] Processed parquet files exist
+- [x] Train/val/test split matches §4.3 (see deviation note above for the one
+      anchor-point caveat)
+- [x] Unit tests pass (6/6, plus the full existing suite re-run clean)
 
 ---
 
