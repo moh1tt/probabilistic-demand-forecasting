@@ -1,0 +1,25 @@
+# Env
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Data (raw + processed; regenerated from raw via ingestion, not committed)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Experiment tracking / model artifacts
+mlruns/
+mlartifacts/
+*.ckpt
+*.pt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code project settings
+.claude/
