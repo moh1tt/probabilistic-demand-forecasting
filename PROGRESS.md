@@ -271,13 +271,148 @@ carry this framing into the DeepAR-vs-baselines comparison in Phase 3.
 - [x] Naive/ETS/Prophet produce forecasts and metrics on rolling origins
 - [x] Results saved to a results table (`reports/baseline_backtest_*.csv`)
 
-Not started.
-
 ---
 
 ## Phase 3 — Global model (DeepAR)
 
-Not started.
+**Status:** Done, pending your review.
+
+**What was built:**
+- `src/features/lags.py`, updated `calendar.py`/`price.py` — added the
+  remaining spec §5 feature groups needed for DeepAR (rolling mean/std 7/28,
+  a collapsed per-state SNAP flag, price-change flag), each module now also
+  declares which of its columns are "known" vs "unknown" future covariates,
+  reused directly by the dataset builder.
+- `src/models/global_model.py` — `load_and_engineer_features()` (loads
+  train+val, restricts to a series subset, engineers features on each
+  series' *full* history before truncating to a bounded training window, so
+  early rows in the truncated window still get correct rolling/lag context),
+  `build_datasets()` (wraps `TimeSeriesDataSet`), `build_model()` (wraps
+  `DeepAR.from_dataset`).
+- `src/backtest/run_deepar.py` — orchestration: selects a stratified series
+  subset, trains with early stopping, generates P10/P50/P90 for the val
+  period, evaluates with the *same* `src/backtest/metrics.py` functions used
+  for the baselines, writes `reports/deepar_val_forecast.csv` and
+  `reports/deepar_val_results.csv`. Wired into `run.sh`.
+- `reports/phase3_comparison.csv` — combined table, all four models
+  (naive/ets/prophet/deepar) on the val period.
+- No new dedicated unit tests for `global_model.py`/`run_deepar.py` — the
+  feature-engineering logic they depend on is already covered by
+  `test_features.py`, and the two are thin wrappers around pytorch-forecasting
+  library code; validated instead through incremental dry runs (10, then 30,
+  then 300 series) before committing to the real run, plus the real run
+  itself succeeding end to end. Full existing suite re-run clean: 30/30.
+
+**Two technical findings that shaped the implementation (worth documenting,
+not just silently coded around):**
+1. **DeepAR's loss must be a `DistributionLoss`, not `QuantileLoss`.**
+   Verified directly against the installed pytorch-forecasting 1.2.0
+   (`DeepAR.__init__`'s `loss` parameter is typed `DistributionLoss`).
+   DeepAR's decoder is autoregressive — it samples from a fitted
+   distribution at each step and feeds that back in, which a plain
+   quantile-regression loss can't support architecturally. Trained with
+   `NegativeBinomialDistributionLoss` (the standard choice for
+   over-dispersed count data like retail sales), and derived P10/P50/P90 at
+   inference by sampling from the fitted distribution
+   (`predict(mode="quantiles")`). Spec §8's WQL/pinball loss is still
+   exactly what's used to *evaluate* the resulting forecasts — nothing about
+   the reported metric changed, only the training objective's mechanics,
+   which the spec's own wording ("Quantile output head... via pinball
+   loss") doesn't actually pin down at the training-loss level.
+2. **DeepAR requires encoder and decoder to see the same variable set**
+   (verified via an `AssertionError` from the library when rolling
+   mean/std were included as encoder-only "unknown" reals). Rolling
+   mean/std of the target are genuinely future-unknown, so they can't be
+   decoder inputs — unlike TFT, DeepAR's architecture doesn't support that
+   asymmetry. Dropped them from DeepAR's feature set specifically (they're
+   still implemented and tested in `src/features/lags.py`); the target's own
+   lag-7/lag-28, fed via `TimeSeriesDataSet`'s native `lags={"sales": [7, 28]}`
+   mechanism (which the library aligns correctly across the encoder/decoder
+   boundary — hand-rolled lag columns wouldn't be), give the model
+   equivalent recent-history signal through its recurrent state instead.
+
+**Deviation from spec — training scope, checked with you first:** DeepAR
+training turned out to be CPU-bound on data loading, not GPU-bound (the
+spec's suggested model is tiny — hidden_size=32, 2 LSTM layers, ~20K
+params — the RTX 2070 is barely exercised). Measured before committing to a
+real run: 300 series/1yr history took 188s for 2 epochs with
+`num_workers=0`, 114s with `num_workers=4`. Full 30,490-series training
+would have taken multiple hours, which isn't warranted (§2 rules out
+leaderboard-chasing, and §13 says cut scope before timeline, not the
+reverse). Presented three concrete options with real timing estimates; you
+picked **~2,000 series (stratified by cat_id, same method as the Phase 2
+baseline subset, seed=43), last 365 days of train history**. Actual run:
+2,001 series selected (target 2,000; proportional allocation rounds up
+slightly), 726,785 training samples, early-stopped at epoch 4
+(`EarlyStopping(monitor="val_loss", patience=3)`), total wall time well
+within the estimated 30-50 minute window. One series
+(`HOUSEHOLD_1_400_WI_2_evaluation`) was dropped by the library itself —
+insufficient history for the configured encoder length — logged, not
+hidden.
+
+**Also spec-sanctioned adjustment:** early stopping monitors `val_loss`
+(the NegBin NLL), not literal validation WQL. Computing full WQL every
+epoch would require quantile-sampling every series each epoch, adding
+significant overhead for a metric that's already well correlated with
+NLL improving. Spec §6.2 explicitly frames its config as a starting point
+("adjust based on compute"), so this is used as intended, not a silent
+deviation.
+
+**Evaluation methodology:** DeepAR is trained *once* (not re-fit per
+rolling origin like the cheap classical baselines) and evaluated on the val
+split (days 1886-1913). This is exactly the Phase 2 harness's last
+origin's (1885) evaluation window by design — the origin spacing was chosen
+in Phase 2 specifically so this alignment would hold — so the comparison
+below uses identical ground truth and an identical WQL/MASE implementation
+for every model, no re-derivation. Test set (1914-1941) untouched, per
+spec §4.3.
+
+**Results (`reports/phase3_comparison.csv`):**
+
+| model | n_series | series population | WQL | MASE |
+|---|---|---|---|---|
+| seasonal_naive | 30,490 | ~full universe | 0.582 | 1.189 |
+| ets | 100 | Phase 2 subset (seed=42) | **0.472** | **0.976** |
+| prophet | 100 | same as ets | 1.035 | 1.387 |
+| deepar | 2,001 | separate subset (seed=43) | 0.482 | 1.214 |
+
+**Honest comparison (spec §1.3, §13 — report as-is, don't hide or tune
+away):** DeepAR does **not** clearly beat the baselines. It essentially
+ties ETS on WQL (0.482 vs 0.472, a ~2% relative gap that's plausibly within
+noise given ETS's N=100) and is worse on MASE (1.214 vs ETS's 0.976, and
+also worse than naive's 1.189). It clearly beats Prophet on both metrics.
+
+One honest caveat on the comparison itself: ETS/Prophet's 100-series subset
+and DeepAR's 2,001-series subset were deliberately drawn with **different**
+seeds (documented reasoning at the time: DeepAR's training population
+doesn't need to match the baselines' subset series-for-series). Checked the
+actual overlap — only 4 series in common, too few to re-score DeepAR on
+literally the same series ETS/Prophet used. All four numbers above are
+therefore each model's real performance on its own actual evaluation
+population, aligned on time window and metric formula, but not on series
+identity. Naive's near-full-scale number and DeepAR's 2,001-series number
+are both large enough samples to be reasonably stable; ETS/Prophet's
+N=100 is the shakiest of the four.
+
+**Why DeepAR likely doesn't win outright here, and what that means:**
+Trained for only 4 epochs before early stopping triggered (patience=3) —
+a short run with no hyperparameter tuning beyond spec §6.2's starting
+config, so there's real headroom left on the table. More fundamentally,
+per-series methods like ETS are, by construction, tailored to each
+individual series' own history; a global model's theoretical edge is
+expected to show most clearly on long-tail and cold-start series, where
+per-series fitting has little data to work with — and cold-start evaluation
+is exactly what Phase 4 adds next. Chasing DeepAR's WQL down further via
+more epochs/tuning would drift toward the leaderboard-chasing the spec
+rules out (§2); the honest finding as-is, plus the Phase 4 cold-start
+breakdown, is the more informative story for the write-up than a marginally
+better warm-start number.
+
+**Acceptance criteria check (§12, Phase 3 row):**
+- [x] Trains end to end
+- [x] Produces P10/P50/P90 (`reports/deepar_val_forecast.csv`)
+- [x] Honestly compared against baselines on warm-start WQL (see above —
+      does not clearly beat them; documented, not hidden)
 
 ---
 

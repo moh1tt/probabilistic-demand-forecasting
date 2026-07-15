@@ -13,6 +13,7 @@ data/processed/*
 # Experiment tracking / model artifacts
 mlruns/
 mlartifacts/
+lightning_logs/
 *.ckpt
 *.pt
 

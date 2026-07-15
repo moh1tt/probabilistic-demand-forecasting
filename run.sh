@@ -22,7 +22,7 @@ python -m src.ingestion.build_dataset
 python -m src.backtest.run_baselines
 
 # --- Phase 3: global model (DeepAR) -----------------------------------------
-# python -m src.models.global_model
+python -m src.backtest.run_deepar
 
 # --- Phase 4: cold-start evaluation -----------------------------------------
 # pytest tests/test_no_leakage.py
@@ -30,4 +30,4 @@ python -m src.backtest.run_baselines
 # --- Phase 5: business simulation -------------------------------------------
 # python -m src.business_sim.simulate
 
-echo "== done (Phases 3-5 not wired up yet) =="
+echo "== done (Phases 4-5 not wired up yet) =="
