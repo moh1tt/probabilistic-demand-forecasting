@@ -1,0 +1,6 @@
+model,origin,segment_type,segment,n_series,wql,mase
+deepar_coldstart,1885,overall,overall,2001,0.46571247922354964,1.1964762015732449
+deepar_coldstart,1885,start,cold_start,100,0.4601346964770166,0.866731113564077
+deepar_coldstart,1885,start,warm_start,1901,0.4661013753592423,1.213154562189093
+deepar_coldstart,1885,volume,high_volume,377,0.38736910731531465,0.9081919240802246
+deepar_coldstart,1885,volume,long_tail,1624,0.5802021482641289,1.2636890479646292

@@ -24,10 +24,16 @@ python -m src.backtest.run_baselines
 # --- Phase 3: global model (DeepAR) -----------------------------------------
 python -m src.backtest.run_deepar
 
-# --- Phase 4: cold-start evaluation -----------------------------------------
-# pytest tests/test_no_leakage.py
+# --- Phase 4: cold-start holdout + leakage test -----------------------------
+pytest tests/test_no_leakage.py
+python -m src.backtest.run_deepar_coldstart
 
-# --- Phase 5: business simulation -------------------------------------------
-# python -m src.business_sim.simulate
+# --- Phase 5: business simulation --------------------------------------------
+python -m src.backtest.run_business_sim
 
-echo "== done (Phases 4-5 not wired up yet) =="
+# --- Phase 6: dashboard data prep --------------------------------------------
+# (the dashboard itself is interactive — start it separately with
+# `streamlit run dashboard/app.py`; this just refreshes its data source)
+python -m dashboard.prepare_data
+
+echo "== done =="
