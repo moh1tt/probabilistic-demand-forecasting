@@ -122,11 +122,20 @@ those reports exist (they're committed, unlike `data/raw`/`data/processed`).
 | ets | 100 | stratified subset | **0.472** | **0.976** |
 | prophet | 100 | same subset | 1.035 | 1.387 |
 | deepar (global) | 2,001 | stratified subset | 0.482 | 1.214 |
+| lightgbm (global, bonus) | 2,001 | same subset as deepar | **0.467** | **0.862** |
 
 DeepAR essentially ties ETS on WQL and doesn't clearly beat the baselines
 on warm-start series — documented as an honest result, not hidden (see
 `reports/technical_writeup.md` §4 for the full discussion of why, and where
 a global model's advantage is expected to show up instead).
+
+**Bonus, post-completion:** a global LightGBM model (`src/models/lightgbm_model.py`),
+evaluated on the exact same rolling-origin harness and 2,001-series
+population as DeepAR, comes out ahead on both WQL and MASE — consistent
+with M5's own competition results (the winning solutions were all
+LightGBM-based). Not wired into `run.sh`; full comparison and the
+"horizon-as-feature" design in `PROGRESS.md`'s Bonus section and
+`reports/phase3_comparison_with_lightgbm.csv`.
 
 **Cold-start vs. warm-start (same DeepAR model, retrained with a
 leakage-tested cold-start holdout — 100 series with <28 days of visible
