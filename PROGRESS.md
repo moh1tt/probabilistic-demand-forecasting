@@ -746,3 +746,107 @@ validated by actually running it, not just reading the code):**
 - [x] 10. "Defend this decision" note, all 3 required questions answered.
 
 **All 10 Definition of Done items are now checked off. Project complete.**
+
+---
+
+## Bonus (post-completion, not part of the graded spec pipeline)
+
+Two additions made after Phase 7, at the user's request, purely out of
+curiosity/comparison — neither is wired into `run.sh`, and neither changes
+anything in Phases 0-7 above.
+
+### Kaggle-format submission
+
+`src/backtest/build_kaggle_submission.py` builds a real M5
+`m5-forecasting-accuracy` submission (`reports/kaggle_submission.csv`,
+60,980 rows). Kaggle's format needs two 28-day blocks per series:
+`_validation` (days 1914-1941, which Phase 5 already forecast) and
+`_evaluation` (days 1942-1969) — the block Kaggle actually grades, and
+which this project had never touched (the Kaggle download only includes
+actuals through day 1941). Confirmed `calendar.csv`/`sell_prices.csv` both
+extend through day 1969 even though the sales table doesn't, so a genuine
+forecast into that period was possible: retrained DeepAR once more (same
+config as Phase 4/5) and extended it 28 more days past the test split.
+Coverage: the ~2,001-series DeepAR population gets real forecasts in both
+blocks; the remaining ~28,489 series use the full-scale seasonal-naive
+baseline for complete coverage (Kaggle requires every series).
+
+**Bug caught before delivering the file:** the first version reused
+`config["origin_day"]` (1885 — the val-split origin DeepAR trains against
+internally) as if it were the test/eval period boundary. That's wrong, and
+it silently produced **null forecasts for all 2,001 DeepAR-covered series**
+after the wide-format pivot (their real days landed outside the F1-F28
+range and got dropped). Caught by inspecting null counts on the output
+before sending it, not assumed correct — fixed by anchoring the two blocks
+to the real val/test max days instead, verified zero nulls across all
+60,980 rows afterward.
+
+**Result:** scored 0.90 on Kaggle's late-submission scoring (winning
+LightGBM-based solutions scored ~0.56). Important caveat, not just a
+number to note in passing: ~93% of this submission is the naive baseline
+(only ~7% of series carry real DeepAR forecasts), and WRMSSE is
+revenue-weighted, so the 0.90 is overwhelmingly a reflection of the naive
+baseline's quality, not DeepAR's. It is *not* a fair read on how the
+trained model performed — the apples-to-apples WQL/MASE comparisons in
+Phase 3/4 (same population, same metric code) are the trustworthy signal
+for that. Also not a fair comparison to the winning 0.56 regardless: M5's
+winning solutions were LightGBM-based (see below), trained at full
+30,490-series scale with heavy ensembling — a different method family and
+a much larger effort budget, not what this project set out to do (§2's own
+non-goal: no leaderboard chasing).
+
+### Global LightGBM baseline
+
+Added at the user's request specifically to compare against the other
+models — motivated by the Kaggle-score discussion above once it came up
+that LightGBM (not deep sequence models) is what actually won M5.
+`src/models/lightgbm_model.py` + `src/backtest/run_lightgbm.py`.
+
+Unlike ETS/Prophet (one model per series), this is trained as a single
+**global** model, same spirit as DeepAR, evaluated via the *same*
+rolling-origin harness as Phase 2 (`src/backtest/harness.py`, unchanged) on
+the *exact same* ~2,001-series population as DeepAR (`select_training_series()`,
+seed=43) — a genuine apples-to-apples global-vs-global comparison, since
+DeepAR itself was never run at full 30,490-series scale either.
+
+**Design — "horizon-as-feature" multi-horizon strategy:** one LightGBM
+model per quantile (3 total: q0.1/q0.5/q0.9, `objective="quantile"`), not
+28 separate per-horizon-day models and not a recursive forecast. The
+horizon step `h` (1-28) is an explicit input feature. Training panel: for
+each candidate origin day within the available history, that day's
+already-computed features (calendar, price, lag-7/28, rolling mean/std —
+reusing the same `src/features/*` functions as everywhere else in this
+project) paired with the actual sales value `h` days later, for every `h`
+in 1-28. Scope reduction (documented): candidate origins are spaced 7 days
+apart within the most recent 180 days of whatever history is available at
+forecast time (`TRAIN_ORIGIN_STRIDE`/`TRAIN_LOOKBACK_DAYS`) — using every
+single day would blow the panel up to hundreds of millions of rows with no
+real benefit. 4 new unit tests (`tests/test_lightgbm_model.py`) verify the
+panel's target values exactly match actual future sales and that no
+training example's target day ever exceeds the forecast origin (the
+panel's own no-leakage guarantee, independent of harness.py's). Full suite:
+48/48 passing.
+
+**Results, same window/population as DeepAR (`reports/phase3_comparison_with_lightgbm.csv`):**
+
+| model | n_series | WQL | MASE |
+|---|---|---|---|
+| seasonal_naive | 30,490 | 0.582 | 1.189 |
+| ets | 100 | 0.472 | 0.976 |
+| prophet | 100 | 1.035 | 1.387 |
+| deepar | 2,001 | 0.482 | 1.214 |
+| lightgbm | 2,001 | **0.467** | **0.862** |
+
+**Honest read:** LightGBM comes out ahead of every other model here,
+including DeepAR, on the identical population and evaluation window. This
+is consistent with — not a surprise given — the M5 competition's own
+well-documented outcome (its winning solutions were all LightGBM-based;
+cited in `reports/technical_writeup.md`'s references). It doesn't overturn
+this project's core thesis (a global *probabilistic* deep model + cold-start
+handling + business translation), but it's an honest, informative data
+point: for pure point/quantile accuracy on this dataset, a well-featured
+gradient-boosted tree model is a strong baseline that a single, lightly-tuned
+DeepAR run doesn't beat. Aggregated across all 5 rolling origins (not just
+the one DeepAR-comparable window), LightGBM's WQL is 0.475 ± 0.015 and MASE
+is 0.866 ± 0.092 — stable across origins, not a one-window fluke
+(`reports/lightgbm_backtest_summary.csv`).

@@ -1,0 +1,2 @@
+model,segment,wql_mean,wql_std,mase_mean,mase_std,avg_n_series,n_origins
+lightgbm,overall,0.47528810189582293,0.014805966524088604,0.8664866881432332,0.09157126233220221,2000.2,5

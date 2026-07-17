@@ -62,6 +62,7 @@ def load_and_engineer_features(
     coldstart_ids: list[str] | None = None,
     coldstart_cutoff_day: int | None = None,
     include_test: bool = False,
+    extra_rows: pl.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Load train+val (plus test if `include_test`), restrict to
     `series_ids` if given, engineer features (on full per-series history, so
@@ -81,6 +82,16 @@ def load_and_engineer_features(
     Nothing upstream of this flag (training, model selection, early
     stopping) ever sees test rows; this is purely for the one-time final
     read spec §4.3 allows.
+
+    `extra_rows`: not used by any graded-phase pipeline — only the optional
+    Kaggle-submission script (src/backtest/build_kaggle_submission.py) sets
+    this, to append known-covariate-only rows for days 1942-1969 (never
+    part of this project's own data, see that module's docstring). Appended
+    here, before coldstart truncation/flag and price-change-flag, so those
+    are computed correctly across the real/future boundary (e.g. a price
+    change between day 1941 and day 1942 is detected, not just within the
+    future block in isolation). Must already match `df`'s schema at this
+    point (RAW_COLS, `_STR_COLS` cast to Utf8).
     """
     cast = [pl.col(c).cast(pl.Utf8) for c in _STR_COLS]
     train = pl.read_parquet(PROCESSED_DIR / "train.parquet").select(RAW_COLS).with_columns(cast)
@@ -93,6 +104,9 @@ def load_and_engineer_features(
 
     if series_ids is not None:
         df = df.filter(pl.col("id").is_in(series_ids))
+
+    if extra_rows is not None:
+        df = pl.concat([df, extra_rows.select(RAW_COLS)])
 
     if coldstart_ids:
         df = truncate_coldstart_history(df, coldstart_ids, coldstart_cutoff_day)
