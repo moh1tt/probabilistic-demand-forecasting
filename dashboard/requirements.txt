@@ -1,0 +1,7 @@
+# Runtime deps for the Streamlit dashboard only (Streamlit Community Cloud
+# reads this file instead of the root requirements.txt, which pulls in the
+# full training stack — torch/prophet/lightgbm/mlflow — that isn't needed
+# to just read the committed reports/*.csv files).
+streamlit==1.39.0
+pandas==2.2.3
+plotly==5.24.1
